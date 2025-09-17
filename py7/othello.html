@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>オセロ 完全版</title>
+<style>
+  canvas { background: #008000; display: block; margin: 20px auto; outline:none; }
+  #status { text-align: center; font-size: 18px; margin: 10px; }
+  .controls { text-align: center; margin: 10px; }
+  button { font-size: 16px; margin: 5px; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <button onclick="setGameMode('human')">対人戦</button>
+  <button onclick="setGameMode('ai')">AI戦</button>
+  <button onclick="setBeginnerMode(true)">初心者モード</button>
+  <button onclick="setBeginnerMode(false)">普通モード</button>
+  <button onclick="resetGame()">リスタート</button>
+  <button onclick="skipTurn()">ターンスキップ</button>
+</div>
+
+<div id="status">黒: 2 白: 2 → 黒(●)の番</div>
+<canvas id="board" width="480" height="480" tabindex="0"></canvas>
+
+<script>
+const SIZE = 8;
+const CELL = 60;
+let board = [];
+let currentPlayer = 1;
+let beginnerMode = true;
+let gameMode = 'ai';
+let canvas = document.getElementById('board');
+let ctx = canvas.getContext('2d');
+let cursorR = 0, cursorC = 0;
+
+function initBoard() {
+    board = Array.from({length: SIZE},()=>Array(SIZE).fill(0));
+    board[3][3]=2; board[3][4]=1;
+    board[4][3]=1; board[4][4]=2;
+    cursorR = 0; cursorC = 0;
+}
+
+function drawBoard() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // 初心者モード青表示
+    if(beginnerMode){
+        ctx.fillStyle = 'rgba(0,0,255,0.3)';
+        for(let r=0;r<SIZE;r++)
+            for(let c=0;c<SIZE;c++)
+                if(isValidMove(r,c,currentPlayer))
+                    ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+    }
+
+    // マス線
+    ctx.strokeStyle = 'black';
+    for(let i=0;i<=SIZE;i++){
+        ctx.beginPath();
+        ctx.moveTo(0,i*CELL); ctx.lineTo(SIZE*CELL,i*CELL); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,SIZE*CELL); ctx.stroke();
+    }
+
+    // カーソル表示
+    ctx.strokeStyle = 'yellow';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(cursorC*CELL, cursorR*CELL, CELL, CELL);
+    ctx.lineWidth = 1;
+
+    // 石描画
+    for(let r=0;r<SIZE;r++)
+        for(let c=0;c<SIZE;c++){
+            if(board[r][c]==1){
+                ctx.fillStyle='black';
+                ctx.beginPath();
+                ctx.arc(c*CELL+CELL/2,r*CELL+CELL/2,CELL/2-5,0,Math.PI*2);
+                ctx.fill();
+            } else if(board[r][c]==2){
+                ctx.fillStyle='white';
+                ctx.beginPath();
+                ctx.arc(c*CELL+CELL/2,r*CELL+CELL/2,CELL/2-5,0,Math.PI*2);
+                ctx.fill();
+                ctx.strokeStyle='black';
+                ctx.stroke();
+            }
+        }
+    updateStatus();
+}
+
+canvas.addEventListener('click', e=>{
+    let rect = canvas.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    let c = Math.floor(x/CELL);
+    let r = Math.floor(y/CELL);
+    playMove(r,c);
+});
+
+canvas.addEventListener('keydown', e=>{
+    switch(e.key){
+        case 'ArrowUp': cursorR=Math.max(0,cursorR-1); break;
+        case 'ArrowDown': cursorR=Math.min(SIZE-1,cursorR+1); break;
+        case 'ArrowLeft': cursorC=Math.max(0,cursorC-1); break;
+        case 'ArrowRight': cursorC=Math.min(SIZE-1,cursorC+1); break;
+        case 'Enter':
+        case ' ':
+            playMove(cursorR,cursorC); break;
+    }
+    drawBoard();
+});
+
+function playMove(r,c){
+    if(!isValidMove(r,c,currentPlayer)) return;
+    placeStoneWithAnimation(r,c,currentPlayer);
+}
+
+function placeStoneWithAnimation(r,c,player){
+    let radius = 0;
+    let maxRadius = CELL/2-5;
+    let step = 3;
+
+    function animate(){
+        drawBoard();
+        ctx.fillStyle = player==1 ? 'black':'white';
+        ctx.beginPath();
+        ctx.arc(c*CELL+CELL/2, r*CELL+CELL/2, radius, 0, Math.PI*2);
+        ctx.fill();
+        if(player==2){ ctx.strokeStyle='black'; ctx.stroke(); }
+
+        radius += step;
+        if(radius <= maxRadius){
+            requestAnimationFrame(animate);
+        } else {
+            board[r][c] = player;
+            flipStonesWithAnimation(r,c,player,()=>{
+                currentPlayer = 3 - player;
+                drawBoard();
+                checkGameEnd();
+                if(gameMode=='ai' && currentPlayer==2){
+                    setTimeout(aiPlay, 400);
+                }
+            });
+        }
+    }
+    animate();
+}
+
+function flipStonesWithAnimation(r,c,player,callback){
+    let opponent = 3-player;
+    let dr=[-1,-1,-1,0,0,1,1,1];
+    let dc=[-1,0,1,-1,1,-1,0,1];
+    let flips = [];
+
+    for(let d=0; d<8; d++){
+        let i=r+dr[d], j=c+dc[d], toFlip=[];
+        while(i>=0 && i<SIZE && j>=0 && j<SIZE && board[i][j]==opponent){
+            toFlip.push([i,j]); i+=dr[d]; j+=dc[d];
+        }
+        if(i>=0 && i<SIZE && j>=0 && j<SIZE && board[i][j]==player){
+            flips = flips.concat(toFlip);
+        }
+    }
+
+    let index = 0;
+    function animateFlip(){
+        if(index >= flips.length){
+            if(callback) callback();
+            return;
+        }
+        let [r0,c0] = flips[index];
+        let frames = 10;
+        let cur = 0;
+        function flipFrame(){
+            drawBoard();
+            ctx.save();
+            ctx.translate(c0*CELL+CELL/2,r0*CELL+CELL/2);
+            let scaleX = Math.cos(Math.PI * cur / frames);
+            ctx.scale(scaleX,1);
+            ctx.fillStyle = scaleX>=0 ? opponentColor(opponent) : opponentColor(player);
+            ctx.beginPath();
+            ctx.arc(0,0,CELL/2-5,0,Math.PI*2);
+            ctx.fill();
+            ctx.restore();
+            cur++;
+            if(cur <= frames){
+                requestAnimationFrame(flipFrame);
+            } else {
+                board[r0][c0] = player;
+                index++;
+                animateFlip();
+            }
+        }
+        flipFrame();
+    }
+    animateFlip();
+}
+
+function opponentColor(player){ return player==1?'black':'white'; }
+
+function aiPlay(){
+    let corners=[], edges=[], others=[];
+    for(let r=0;r<SIZE;r++)
+        for(let c=0;c<SIZE;c++){
+            if(isValidMove(r,c,2)){
+                if((r==0||r==7)&&(c==0||c==7)) corners.push([r,c]);
+                else if(r==0||r==7||c==0||c==7) edges.push([r,c]);
+                else others.push([r,c]);
+            }
+        }
+    let move = null;
+    if(corners.length>0) move = corners[Math.floor(Math.random()*corners.length)];
+    else if(edges.length>0) move = edges[Math.floor(Math.random()*edges.length)];
+    else if(others.length>0) move = others[Math.floor(Math.random()*others.length)];
+
+    if(move){
+        placeStoneWithAnimation(move[0], move[1], 2);
+    }
+}
+
+function isValidMove(r,c,player){
+    if(r<0||r>=SIZE||c<0||c>=SIZE||board[r][c]!=0) return false;
+    let opponent = 3-player;
+    let dr=[-1,-1,-1,0,0,1,1,1];
+    let dc=[-1,0,1,-1,1,-1,0,1];
+    for(let d=0;d<8;d++){
+        let i=r+dr[d], j=c+dc[d], found=false;
+        while(i>=0&&i<SIZE&&j>=0&&j<SIZE&&board[i][j]==opponent){
+            found=true; i+=dr[d]; j+=dc[d];
+        }
+        if(found && i>=0&&i<SIZE && j>=0&&j<SIZE && board[i][j]==player) return true;
+    }
+    return false;
+}
+
+function countStone(player){ return board.flat().filter(x=>x==player).length; }
+
+function updateStatus(){
+    let black=countStone(1);
+    let white=countStone(2);
+    let turn = currentPlayer==1 ? "黒(●)の番":"白(○)の番";
+    document.getElementById('status').innerText=`黒: ${black}   白: ${white}   → ${turn}`;
+}
+
+function checkGameEnd(){
+    if(!hasValidMove(1) && !hasValidMove(2)){
+        let black=countStone(1), white=countStone(2);
+        let result = black>white ? "黒の勝利！" : white>black ? "白の勝利！" : "引き分け！";
+        document.getElementById('status').innerText=`黒: ${black} 白: ${white} → ${result}`;
+    }
+}
+
+function hasValidMove(player){
+    for(let r=0;r<SIZE;r++)
+        for(let c=0;c<SIZE;c++)
+            if(isValidMove(r,c,player)) return true;
+    return false;
+}
+
+// ターンスキップ
+function skipTurn(){
+    if(!hasValidMove(currentPlayer)){
+        currentPlayer = 3 - currentPlayer;
+        drawBoard();
+        checkGameEnd();
+        if(gameMode=='ai' && currentPlayer==2){
+            setTimeout(aiPlay,400);
+        }
+    } else {
+        alert("置けるマスがあります！スキップできません。");
+    }
+}
+
+function resetGame(){
+    initBoard();
+    currentPlayer=1;
+    drawBoard();
+    canvas.focus();
+}
+
+function setGameMode(mode){ gameMode=mode; }
+function setBeginnerMode(flag){ beginnerMode=flag; }
+
+initBoard();
+drawBoard();
+canvas.focus();
+</script>
+
+</body>
+</html>
